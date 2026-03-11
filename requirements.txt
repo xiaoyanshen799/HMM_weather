@@ -1,0 +1,4 @@
+flwr==1.8.0
+torch==2.2.2
+pandas==2.2.2
+numpy==1.26.4
