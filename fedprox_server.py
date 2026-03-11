@@ -10,14 +10,121 @@ Example:
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import logging
 import math
-from typing import List, Tuple
+import time
+from typing import Dict, List, Optional, Tuple, Union
 
 import flwr as fl
-from flwr.common import Metrics, ndarrays_to_parameters
+from flwr.common import Code, FitIns, FitRes, Metrics, Scalar, ndarrays_to_parameters
+from flwr.server.client_manager import SimpleClientManager
+from flwr.server.client_proxy import ClientProxy
+from flwr.server.server import Server
 from flwr.server.strategy import FedAdam
 from federated_pm25 import create_model, get_parameters, list_client_specs, make_datasets
+
+
+def _to_float(metric_value) -> Optional[float]:
+    if isinstance(metric_value, (int, float)):
+        return float(metric_value)
+    return None
+
+
+def timed_fit_clients(
+    client_instructions: List[Tuple[ClientProxy, FitIns]],
+    max_workers: Optional[int],
+    timeout: Optional[float],
+    group_id: int,
+) -> Tuple[
+    List[Tuple[ClientProxy, FitRes]],
+    List[Union[Tuple[ClientProxy, FitRes], BaseException]],
+    Dict[str, float],
+]:
+    results: List[Tuple[ClientProxy, FitRes]] = []
+    failures: List[Union[Tuple[ClientProxy, FitRes], BaseException]] = []
+    durations_by_cid: Dict[str, float] = {}
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        submitted: Dict[concurrent.futures.Future, ClientProxy] = {}
+        started_at: Dict[concurrent.futures.Future, float] = {}
+        for client_proxy, ins in client_instructions:
+            future = executor.submit(client_proxy.fit, ins, timeout=timeout, group_id=group_id)
+            submitted[future] = client_proxy
+            started_at[future] = time.perf_counter()
+
+        for future in concurrent.futures.as_completed(submitted):
+            client_proxy = submitted[future]
+            durations_by_cid[client_proxy.cid] = time.perf_counter() - started_at[future]
+            try:
+                fit_res = future.result()
+            except BaseException as exc:  # noqa: BLE001
+                failures.append(exc)
+                continue
+
+            result = (client_proxy, fit_res)
+            if fit_res.status.code == Code.OK:
+                results.append(result)
+            else:
+                failures.append(result)
+
+    return results, failures, durations_by_cid
+
+
+class TimedServer(Server):
+    def fit_round(
+        self,
+        server_round: int,
+        timeout: Optional[float],
+    ):
+        client_instructions = self.strategy.configure_fit(
+            server_round=server_round,
+            parameters=self.parameters,
+            client_manager=self._client_manager,
+        )
+
+        if not client_instructions:
+            logging.info("configure_fit: no clients selected, cancel")
+            return None
+        logging.info(
+            "configure_fit: strategy sampled %s clients (out of %s)",
+            len(client_instructions),
+            self._client_manager.num_available(),
+        )
+
+        results, failures, durations_by_cid = timed_fit_clients(
+            client_instructions=client_instructions,
+            max_workers=self.max_workers,
+            timeout=timeout,
+            group_id=server_round,
+        )
+        logging.info(
+            "aggregate_fit: received %s results and %s failures",
+            len(results),
+            len(failures),
+        )
+
+        for client_proxy, fit_res in results:
+            cid = client_proxy.cid
+            round_time_s = durations_by_cid.get(cid)
+            compute_time_s = _to_float(fit_res.metrics.get("compute_time_s"))
+            fit_time_s = _to_float(fit_res.metrics.get("fit_time_s"))
+            if round_time_s is not None:
+                fit_res.metrics["round_time_s"] = round_time_s
+            logging.info(
+                "Round %s client %s time: round_time_s=%s compute_time_s=%s fit_time_s=%s n=%s",
+                server_round,
+                cid,
+                f"{round_time_s:.3f}" if round_time_s is not None else "-",
+                f"{compute_time_s:.3f}" if compute_time_s is not None else "-",
+                f"{fit_time_s:.3f}" if fit_time_s is not None else "-",
+                fit_res.num_examples,
+            )
+
+        parameters_aggregated, metrics_aggregated = self.strategy.aggregate_fit(
+            server_round, results, failures
+        )
+        return parameters_aggregated, metrics_aggregated, (results, failures)
 
 
 def parse_args() -> argparse.Namespace:
@@ -101,6 +208,64 @@ def main() -> None:
         logging.info("Round aggregated metrics -> mse: %.4f  rmse: %.4f  mae: %.4f", mse, rmse, mae)
         return {"mse": mse, "rmse": rmse, "mae": mae}
 
+    def aggregate_fit_metrics(metrics: List[Tuple[int, Metrics]]) -> Metrics:
+        total_examples = sum(num_examples for num_examples, _ in metrics)
+        if total_examples == 0:
+            return {}
+
+        total_train_loss = 0.0
+        train_loss_examples = 0
+        weighted_compute_time = 0.0
+        compute_examples = 0
+        weighted_fit_time = 0.0
+        fit_examples = 0
+        weighted_round_time = 0.0
+        round_examples = 0
+
+        for num_examples, m in metrics:
+            cid = m.get("client") if isinstance(m, dict) else None
+            train_loss = _to_float(m.get("train_loss")) if isinstance(m, dict) else None
+            compute_time_s = _to_float(m.get("compute_time_s")) if isinstance(m, dict) else None
+            fit_time_s = _to_float(m.get("fit_time_s")) if isinstance(m, dict) else None
+            round_time_s = _to_float(m.get("round_time_s")) if isinstance(m, dict) else None
+
+            if cid:
+                logging.info(
+                    "Client %s fit metrics: train_loss=%s compute_time_s=%s fit_time_s=%s round_time_s=%s n=%s",
+                    cid,
+                    f"{train_loss:.6f}" if train_loss is not None else "-",
+                    f"{compute_time_s:.3f}" if compute_time_s is not None else "-",
+                    f"{fit_time_s:.3f}" if fit_time_s is not None else "-",
+                    f"{round_time_s:.3f}" if round_time_s is not None else "-",
+                    num_examples,
+                )
+
+            if train_loss is not None:
+                total_train_loss += num_examples * train_loss
+                train_loss_examples += num_examples
+            if compute_time_s is not None:
+                weighted_compute_time += num_examples * compute_time_s
+                compute_examples += num_examples
+            if fit_time_s is not None:
+                weighted_fit_time += num_examples * fit_time_s
+                fit_examples += num_examples
+            if round_time_s is not None:
+                weighted_round_time += num_examples * round_time_s
+                round_examples += num_examples
+
+        aggregated: Dict[str, Scalar] = {}
+        if train_loss_examples > 0:
+            aggregated["train_loss"] = total_train_loss / train_loss_examples
+        if compute_examples > 0:
+            aggregated["compute_time_s"] = weighted_compute_time / compute_examples
+        if fit_examples > 0:
+            aggregated["fit_time_s"] = weighted_fit_time / fit_examples
+        if round_examples > 0:
+            aggregated["round_time_s"] = weighted_round_time / round_examples
+        if aggregated:
+            logging.info("Round aggregated fit metrics -> %s", aggregated)
+        return aggregated
+
     if args.strategy == "fedavg":
         strategy = fl.server.strategy.FedAvg(
             fraction_fit=fit_frac,
@@ -108,6 +273,7 @@ def main() -> None:
             min_fit_clients=args.clients_per_round,
             min_available_clients=args.min_available_clients,
             min_evaluate_clients=args.clients_per_round,
+            fit_metrics_aggregation_fn=aggregate_fit_metrics,
             evaluate_metrics_aggregation_fn=aggregate_metrics,
         )
     else:
@@ -120,6 +286,7 @@ def main() -> None:
                 min_fit_clients=args.clients_per_round,
                 min_available_clients=args.min_available_clients,
                 min_evaluate_clients=args.clients_per_round,
+                fit_metrics_aggregation_fn=aggregate_fit_metrics,
                 evaluate_metrics_aggregation_fn=aggregate_metrics,
             )
         else:
@@ -129,6 +296,7 @@ def main() -> None:
                 min_fit_clients=args.clients_per_round,
                 min_available_clients=args.min_available_clients,
                 min_evaluate_clients=args.clients_per_round,
+                fit_metrics_aggregation_fn=aggregate_fit_metrics,
                 evaluate_metrics_aggregation_fn=aggregate_metrics,
                 eta=args.eta,
                 eta_l=None,
@@ -140,8 +308,8 @@ def main() -> None:
 
     fl.server.start_server(
         server_address=args.server_address,
+        server=TimedServer(client_manager=SimpleClientManager(), strategy=strategy),
         config=fl.server.ServerConfig(num_rounds=args.num_rounds),
-        strategy=strategy,
     )
 
 

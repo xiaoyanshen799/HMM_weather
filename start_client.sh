@@ -14,18 +14,18 @@ if [[ $# -lt 1 ]]; then
 fi
 
 CLIENT_NAME="$1"
-SERVER_ADDRESS="${2:-${SERVER_ADDRESS:-34.174.125.203:8095}}"
+SERVER_ADDRESS="${2:-${SERVER_ADDRESS:-127.0.0.1:8081}}"
 DATA_ROOT="${3:-${DATA_ROOT:-processed}}"
 
 LOCAL_EPOCHS="${LOCAL_EPOCHS:-5}"
 BATCH_SIZE="${BATCH_SIZE:-64}"
 LR="${LR:-5e-4}"
-MU="${MU:-5e-4}"
+MU="${MU:-1e-3}"
 LOSS="${LOSS:-smoothl1}"
-MODEL="${MODEL:-mlp}"
+MODEL="${MODEL:-gru}"
 SEED="${SEED:-42}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
-ROUTER_VALUE="${ROUTER_VALUE:-{"routing":[{"hops":"34.174.125.203:8095,127.0.0.1:8081"}]}}"
+# ROUTER_VALUE="${ROUTER_VALUE:-{"routing":[{"hops":"34.174.125.203:8095,127.0.0.1:8081"}]}}"
 # Force single-threaded math for consistent local training (override via env if needed).
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
 export MKL_NUM_THREADS="${MKL_NUM_THREADS:-1}"
@@ -48,4 +48,4 @@ exec "${PYTHON_BIN}" fedprox_client.py \
   --model "${MODEL}" \
   --loss "${LOSS}" \
   --seed "${SEED}"\
-  --router-value "${ROUTER_VALUE}"
+  # --router-value "${ROUTER_VALUE}"

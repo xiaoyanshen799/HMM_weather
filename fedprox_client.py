@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import glob
 import os
+import time
 from typing import List, Optional, Sequence, Tuple
 
 import flwr as fl
@@ -142,9 +143,11 @@ class PM25Client(fl.client.NumPyClient):
         return get_parameters(self.model)
 
     def fit(self, parameters, config=None):
+        fit_start = time.perf_counter()
         set_parameters(self.model, parameters)
         global_params: List[torch.Tensor] = [p.detach().clone() for p in self.model.parameters()]
         train_loader = DataLoader(self.datasets["train"], batch_size=self.args.batch_size, shuffle=True)
+        compute_start = time.perf_counter()
         loss = train_local(
             self.model,
             train_loader,
@@ -155,7 +158,14 @@ class PM25Client(fl.client.NumPyClient):
             global_params=global_params,
             loss=self.args.loss,
         )
-        metrics = {"train_loss": loss}
+        compute_time_s = time.perf_counter() - compute_start
+        fit_time_s = time.perf_counter() - fit_start
+        metrics = {
+            "train_loss": loss,
+            "compute_time_s": compute_time_s,
+            "fit_time_s": fit_time_s,
+            "client": self.args.client_name,
+        }
         return get_parameters(self.model), len(self.datasets["train"]), metrics
 
     def evaluate(self, parameters, config=None):
@@ -179,7 +189,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lr", type=float, default=1e-3, help="Local learning rate.")
     parser.add_argument("--mu", type=float, default=1e-3, help="FedProx mu coefficient.")
     parser.add_argument("--loss", choices=["mse", "smoothl1"], default="smoothl1", help="Local loss function.")
-    parser.add_argument("--model", choices=["mlp", "gru", "tcn"], default="mlp", help="Model architecture.")
+    parser.add_argument("--model", choices=["mlp", "gru", "tcn"], default="gru", help="Model architecture.")
     parser.add_argument("--seed", type=int, default=42, help="Random seed.")
     parser.add_argument(
         "--router-header",

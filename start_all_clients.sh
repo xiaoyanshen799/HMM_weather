@@ -14,7 +14,7 @@
 set -euo pipefail
 
 DATA_ROOT="${1:-${DATA_ROOT:-processed}}"
-SERVER_ADDRESS="${SERVER_ADDRESS:-34.174.125.203:8095}"
+SERVER_ADDRESS="${SERVER_ADDRESS:-127.0.0.1:8081}"
 # Default: no concurrency limit; each client remains single-threaded internally.
 JOBS="${JOBS:-0}"
 
