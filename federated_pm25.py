@@ -112,18 +112,24 @@ def make_datasets(
 
 
 class PM25Regressor(nn.Module):
-    """Default MLP regressor."""
+    """Configurable MLP regressor."""
 
-    def __init__(self, input_dim: int):
+    def __init__(self, input_dim: int, hidden_dims: Tuple[int, ...] = (128, 64), dropout: float = 0.1):
         super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(input_dim, 128),
-            nn.ReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(128, 64),
-            nn.ReLU(),
-            nn.Linear(64, 1),
-        )
+        if not hidden_dims:
+            raise ValueError("hidden_dims must contain at least one layer size")
+
+        layers: List[nn.Module] = []
+        in_dim = input_dim
+        for i, h in enumerate(hidden_dims):
+            layers.append(nn.Linear(in_dim, h))
+            layers.append(nn.ReLU())
+            # Keep old behavior: dropout only once after first hidden layer by default.
+            if i == 0 and dropout > 0:
+                layers.append(nn.Dropout(dropout))
+            in_dim = h
+        layers.append(nn.Linear(in_dim, 1))
+        self.net = nn.Sequential(*layers)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.net(x)
@@ -132,10 +138,24 @@ class PM25Regressor(nn.Module):
 class GRURegressor(nn.Module):
     """Lightweight GRU regressor treating feature vector as length-1 sequence."""
 
-    def __init__(self, input_dim: int, hidden_size: int = 128, num_layers: int = 1):
+    def __init__(
+        self,
+        input_dim: int,
+        hidden_size: int = 128,
+        num_layers: int = 1,
+        head_hidden: int = 64,
+        dropout: float = 0.0,
+    ):
         super().__init__()
-        self.gru = nn.GRU(input_size=input_dim, hidden_size=hidden_size, num_layers=num_layers, batch_first=True)
-        self.head = nn.Sequential(nn.ReLU(), nn.Linear(hidden_size, 64), nn.ReLU(), nn.Linear(64, 1))
+        gru_dropout = dropout if num_layers > 1 else 0.0
+        self.gru = nn.GRU(
+            input_size=input_dim,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            batch_first=True,
+            dropout=gru_dropout,
+        )
+        self.head = nn.Sequential(nn.ReLU(), nn.Linear(hidden_size, head_hidden), nn.ReLU(), nn.Linear(head_hidden, 1))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x_seq = x.unsqueeze(1)  # (batch, seq=1, feat)
@@ -168,8 +188,12 @@ def create_model(model_type: str, input_dim: int) -> nn.Module:
     mt = model_type.lower()
     if mt == "mlp":
         return PM25Regressor(input_dim)
+    if mt == "mlp_large":
+        return PM25Regressor(input_dim, hidden_dims=(256, 128, 64), dropout=0.1)
     if mt == "gru":
         return GRURegressor(input_dim)
+    if mt == "gru_large":
+        return GRURegressor(input_dim, hidden_size=256, num_layers=2, head_hidden=128, dropout=0.1)
     if mt == "tcn":
         return TCNRegressor(input_dim)
     raise ValueError(f"Unsupported model type: {model_type}")

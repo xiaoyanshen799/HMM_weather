@@ -78,7 +78,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--epochs", type=int, default=20, help="Number of local epochs.")
     parser.add_argument("--batch-size", type=int, default=64, help="Batch size.")
     parser.add_argument("--lr", type=float, default=5e-4, help="Learning rate.")
-    parser.add_argument("--model", choices=["mlp", "gru", "tcn"], default="mlp", help="Model architecture.")
+    parser.add_argument("--model", choices=["mlp", "mlp_large", "gru", "gru_large", "tcn"], default="mlp", help="Model architecture.")
     parser.add_argument("--loss", choices=["mse", "smoothl1"], default="mse", help="Loss function.")
     parser.add_argument("--seed", type=int, default=42, help="Random seed.")
     return parser.parse_args()

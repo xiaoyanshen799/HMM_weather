@@ -189,7 +189,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lr", type=float, default=1e-3, help="Local learning rate.")
     parser.add_argument("--mu", type=float, default=1e-3, help="FedProx mu coefficient.")
     parser.add_argument("--loss", choices=["mse", "smoothl1"], default="smoothl1", help="Local loss function.")
-    parser.add_argument("--model", choices=["mlp", "gru", "tcn"], default="gru", help="Model architecture.")
+    parser.add_argument("--model", choices=["mlp", "mlp_large", "gru", "gru_large", "tcn"], default="gru", help="Model architecture.")
     parser.add_argument("--seed", type=int, default=42, help="Random seed.")
     parser.add_argument(
         "--router-header",

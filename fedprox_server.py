@@ -142,7 +142,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--beta2", type=float, default=0.99, help="FedAdam beta2.")
     parser.add_argument("--tau", type=float, default=1e-4, help="FedAdam tau (L2).")
     parser.add_argument("--data-root", default="processed", help="Root folder containing processed data (for building initial params).")
-    parser.add_argument("--model", choices=["mlp", "gru", "tcn"], default="mlp", help="Model architecture for initial params.")
+    parser.add_argument("--model", choices=["mlp", "mlp_large", "gru", "gru_large", "tcn"], default="mlp", help="Model architecture for initial params.")
     # Optional logging of client-side hyperparameters (for bookkeeping only).
     parser.add_argument("--client-local-epochs", type=str, default=None, help="Client local epochs (for logging).")
     parser.add_argument("--client-lr", type=str, default=None, help="Client learning rate (for logging).")
