@@ -26,12 +26,6 @@ MODEL="${MODEL:-gru}"
 SEED="${SEED:-42}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 # ROUTER_VALUE="${ROUTER_VALUE:-{"routing":[{"hops":"34.174.125.203:8095,127.0.0.1:8081"}]}}"
-# Force single-threaded math for consistent local training (override via env if needed).
-export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
-export MKL_NUM_THREADS="${MKL_NUM_THREADS:-1}"
-export NUMEXPR_NUM_THREADS="${NUMEXPR_NUM_THREADS:-1}"
-export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-1}"
-
 echo "Starting client ${CLIENT_NAME}"
 echo "Server address: ${SERVER_ADDRESS}"
 echo "Data root: ${DATA_ROOT}"
